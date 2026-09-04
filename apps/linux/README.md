@@ -163,3 +163,10 @@ must be reachable from `main` or its matching `release/YYYY.M.PATCH` branch;
 numeric correction tags use the base version's release branch. Dispatch from
 `main` or an exact protected `release-publish/<sha-prefix>-<serial>` tooling tag
 whose commit is contained in `main`. Builds use the validated release tag SHA.
+
+Publication rechecks that tag's commit immediately before each asset upload and
+before creating or updating the desktop-test channel. A moved, missing, or
+unreadable tag stops further writes; already completed writes are not rolled
+back. Inspect partial publication before manual recovery. This check is not an
+atomic tag lock or identical-byte replay guarantee: existing asset replacement,
+same-tag desktop expansion, and the mutable desktop-test channel remain unchanged.
