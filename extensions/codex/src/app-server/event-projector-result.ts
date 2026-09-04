@@ -1,5 +1,6 @@
 import {
   classifyAgentHarnessTerminalOutcome,
+  withRunFailureOrigin,
   type EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams,
   type HeartbeatToolResponse,
   type MessagingToolSend,
@@ -127,10 +128,18 @@ export function buildCodexAttemptResult(
     input.recordSynthesizedMissingToolResultError(synthesizedMissingToolResultError);
     promptErrorSource = promptErrorSource ?? "prompt";
   }
+  const turnFailed = input.completedTurn?.status === "failed";
+  const promptError =
+    input.promptError ??
+    (storedMissingToolResultError
+      ? withRunFailureOrigin(storedMissingToolResultError, "runtime")
+      : turnFailed
+        ? (input.completedTurn?.error?.message ?? "codex app-server turn failed")
+        : null);
   const assistantMessageOptions = {
     tokenUsage: projectedUsage,
     aborted: input.aborted,
-    promptError: input.promptError,
+    promptError,
   };
   const lastAssistant = assistantTexts.length
     ? input.assistantProjection.createAssistantMessage(
@@ -162,11 +171,6 @@ export function buildCodexAttemptResult(
     toolMessages: input.toolTranscriptProjection.transcriptMessages,
     lastAssistant,
   });
-  const turnFailed = input.completedTurn?.status === "failed";
-  const promptError =
-    input.promptError ??
-    storedMissingToolResultError ??
-    (turnFailed ? (input.completedTurn?.error?.message ?? "codex app-server turn failed") : null);
   const agentHarnessResultClassification = classifyAgentHarnessTerminalOutcome({
     assistantTexts,
     reasoningText,

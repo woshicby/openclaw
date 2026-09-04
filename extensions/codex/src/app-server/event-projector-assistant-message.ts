@@ -1,4 +1,5 @@
 import {
+  appendRuntimeFailureDiagnostic,
   formatErrorMessage,
   type NormalizedUsage,
   type AgentHarnessAttemptParamsV2,
@@ -87,7 +88,7 @@ export function createAttributedCodexAssistantMessage(
         cost: ZERO_USAGE.cost,
       }
     : ZERO_USAGE;
-  return {
+  const message: AssistantMessage = {
     role: "assistant",
     content: [{ type: "text", text }],
     api: attribution.api ?? "openai-chatgpt-responses",
@@ -98,6 +99,8 @@ export function createAttributedCodexAssistantMessage(
     errorMessage: options.promptError ? formatErrorMessage(options.promptError) : undefined,
     timestamp: Date.now(),
   };
+  appendRuntimeFailureDiagnostic(message, options.promptError);
+  return message;
 }
 
 export function createAssistantCommentaryMessage(
