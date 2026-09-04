@@ -9,7 +9,7 @@ import {
   bindGatewayContextResolver,
   getGatewayContextResolver,
 } from "../../../plugins/runtime/gateway-request-scope.js";
-import { setCanonicalTaskBackingDetail } from "../../../tasks/task-backing-authority-write.js";
+import { prepareCanonicalTaskActivation } from "../../../tasks/task-backing-authority-write.js";
 import { createSubagentTaskBackingDetail } from "../../../tasks/task-backing-authority.js";
 import { removeInternalSessionEffectsSession } from "../../internal-session-effects.js";
 import type { AgentRunSessionTarget } from "../../run-session-target.js";
@@ -20,6 +20,7 @@ import {
 } from "./subagent-delivery-state.js";
 import { safeRemoveAttachmentsDir } from "./subagent-registry-helpers.js";
 import { subagentRuns } from "./subagent-registry-memory.js";
+import { commitSubagentTaskReplacement } from "./subagent-registry-replacement-store.js";
 import { SubagentWaitManager } from "./subagent-registry-run-wait.js";
 import type {
   RequesterSettleWakeState,
@@ -86,6 +87,7 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     if (!source) {
       return false;
     }
+    const sourceSnapshot = structuredClone(source);
 
     const now = Date.now();
     const generation = nextSubagentRunGeneration(
@@ -191,6 +193,17 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
     );
     clearDeliveryState(next);
 
+    const taskActivation =
+      source.expectsCompletionMessage === false
+        ? undefined
+        : prepareCanonicalTaskActivation({
+            runtime: "subagent",
+            childSessionKey: next.childSessionKey,
+            runId: next.taskRunId ?? next.runId,
+            detail: createSubagentTaskBackingDetail(generation),
+            startedAt: now,
+          });
+
     if (previousRunId !== nextRunId) {
       this.options.runs.delete(previousRunId);
     }
@@ -201,39 +214,32 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
       nextRunId,
       ...[...killReconciliationSnapshots.keys()].map((entry) => entry.runId),
     ];
-    // Revoke the prior task projection before the successor becomes durable.
-    // A crash between stores then fails closed instead of preserving stale authority.
-    const taskBindingResult =
-      source.expectsCompletionMessage === false
-        ? "missing"
-        : setCanonicalTaskBackingDetail({
-            runtime: "subagent",
-            childSessionKey: next.childSessionKey,
-            runId: next.taskRunId ?? next.runId,
-            detail: createSubagentTaskBackingDetail(generation),
-          });
-    if (taskBindingResult === "persist_failed") {
+    const rollbackReplacement = () => {
       this.restoreKillReconciliationSnapshots(killReconciliationSnapshots);
       this.options.runs.delete(nextRunId);
       this.options.runs.set(previousRunId, source);
-      log.warn("failed to bind replacement subagent task generation; restored source lease", {
-        runId: next.runId,
-      });
-      if (replaceParams.persistenceFailure === "throw") {
-        throw new Error(`failed to bind replacement subagent task generation for ${next.runId}`);
+    };
+    const persistReplacement = (): void => {
+      if (taskActivation) {
+        commitSubagentTaskReplacement({
+          runs: this.options.runs,
+          changedRunIds,
+          source: sourceSnapshot,
+          successor: next,
+          task: taskActivation,
+        });
+        return;
       }
-      return false;
-    }
-    try {
       this.options.persistOrThrow(...changedRunIds);
+    };
+    try {
+      persistReplacement();
     } catch (error) {
       if (
         replaceParams.persistenceFailure !== undefined ||
         replaceParams.lifecycleGeneration !== undefined
       ) {
-        this.restoreKillReconciliationSnapshots(killReconciliationSnapshots);
-        this.options.runs.delete(nextRunId);
-        this.options.runs.set(previousRunId, source);
+        rollbackReplacement();
         log.warn("failed to persist replacement subagent recovery run; restored source lease", {
           error,
           previousRunId,
@@ -252,7 +258,15 @@ export class SubagentRecoveryManager extends SubagentWaitManager {
         previousRunId,
         nextRunId,
       });
-      this.options.persist(...changedRunIds);
+      try {
+        persistReplacement();
+      } catch (retryError) {
+        log.warn("failed to retry replacement subagent persistence", {
+          error: retryError,
+          previousRunId,
+          nextRunId,
+        });
+      }
     }
     subagentRuns.commitOwnership(next);
     if (previousRunId !== nextRunId) {

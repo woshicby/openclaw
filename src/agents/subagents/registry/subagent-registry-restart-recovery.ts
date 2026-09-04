@@ -1,12 +1,4 @@
-import { getRuntimeConfig } from "../../../config/config.js";
-import {
-  resolveAgentIdFromSessionKey,
-  resolveSessionStorePathCore,
-} from "../../../config/sessions.js";
-import {
-  loadSessionEntry,
-  patchSessionEntryCore,
-} from "../../../config/sessions/session-accessor.js";
+import { patchSessionEntryCore } from "../../../config/sessions/session-accessor.js";
 import type { GatewayRecoveryRuntime } from "../../../gateway/server-instance-runtime.types.js";
 import { readSessionMessagesAsync } from "../../../gateway/session-transcript-readers.js";
 import * as agentEvents from "../../../infra/agent-events.js";
@@ -29,7 +21,11 @@ import {
   isRestartRecoveryLifecycleCurrent,
 } from "./subagent-registry-restart-recovery-helpers.js";
 import { readSubagentRecoveryTranscriptMessage } from "./subagent-registry-restart-recovery-message.js";
-import { settleAcceptedRecoverySession } from "./subagent-registry-restart-recovery-session.js";
+import {
+  confirmAcceptedRecoveryResumption,
+  loadSubagentRecoverySession,
+  settleAcceptedRecoverySession,
+} from "./subagent-registry-restart-recovery-session.js";
 import type { createSubagentRunManager } from "./subagent-registry-run-manager.js";
 import type {
   SubagentRestartRecoveryReceipt,
@@ -84,6 +80,7 @@ async function reconcileAcceptedRecovery(params: {
   clearAcceptedRecovery: RestartRecoveryParams["clearAcceptedRecovery"];
   entry: SubagentRunRecord;
   getRun: RestartRecoveryParams["getRun"];
+  gatewayRuntime: GatewayRecoveryRuntime | undefined;
   isCurrent: RestartRecoveryParams["isCurrent"];
   now: number;
   receipt: SubagentRestartRecoveryReceipt;
@@ -208,6 +205,7 @@ async function reconcileAcceptedRecovery(params: {
     });
     return { status: "deferred" };
   }
+  await confirmAcceptedRecoveryResumption({ ...params, owner });
   if (!isRestartRecoveryLifecycleCurrent(params.receipt)) {
     return {
       status: "terminal",
@@ -299,13 +297,15 @@ export async function recoverInterruptedSubagentRow(
     return { status: "ignored" };
   }
   try {
-    const agentId = resolveAgentIdFromSessionKey(childSessionKey);
-    const storePath = resolveSessionStorePathCore(getRuntimeConfig().session?.store, { agentId });
-    const sessionEntry = loadSessionEntry({
-      storePath,
-      sessionKey: childSessionKey,
-      clone: false,
+    const session = await loadSubagentRecoverySession({
+      entry: params.entry,
+      isOwnerCurrent: isRecoverySourceCurrent,
+      now: params.now,
     });
+    if (!session) {
+      return { status: "deferred" };
+    }
+    const { agentId, storePath, sessionEntry } = session;
     const recovery = sessionEntry?.subagentRecovery;
     const attempts =
       typeof recovery?.lastAttemptAt === "number" &&
@@ -338,6 +338,7 @@ export async function recoverInterruptedSubagentRow(
         clearAcceptedRecovery: params.clearAcceptedRecovery,
         entry: params.entry,
         getRun: params.getRun,
+        gatewayRuntime: params.gatewayRuntime,
         isCurrent: params.isCurrent,
         now: params.now,
         receipt: currentRecoveryReceipt,
@@ -691,6 +692,7 @@ export async function recoverInterruptedSubagentRow(
       clearAcceptedRecovery: params.clearAcceptedRecovery,
       entry: params.entry,
       getRun: params.getRun,
+      gatewayRuntime: params.gatewayRuntime,
       isCurrent: params.isCurrent,
       now: Date.now(),
       receipt: restartRecovery,
