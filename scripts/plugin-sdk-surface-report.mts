@@ -344,7 +344,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: owner-selected channel groups and their authored config path for safe recovery hints.
       // +1: canonical conversation-to-session binding read for native channel controls.
       // +1: final callable-tool availability projection for native harnesses.
-      4377,
+      // +4: failure-origin tagging, reading, diagnostic projection, and presentation for harnesses.
+      4381,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -463,7 +464,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: owner-selected channel groups and their authored config path for safe recovery hints.
       // +1: canonical conversation-to-session binding read for native channel controls.
       // +1: final callable-tool availability projection for native harnesses.
-      2610,
+      // +4: failure-origin tagging, reading, diagnostic projection, and presentation for harnesses.
+      2614,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
